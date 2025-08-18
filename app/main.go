@@ -23,5 +23,12 @@ func main() {
 		fmt.Println("Error accepting connection: ", err.Error())
 		os.Exit(1)
 	}
-	conn.Write([]byte("+PONG\r\n"))
+	
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.EqualFold(line, "PING") {
+			_, _ = conn.Write([]byte("+PONG\r\n"))
+		}
+	}
 }
