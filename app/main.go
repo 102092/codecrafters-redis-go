@@ -8,14 +8,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/store"
 )
 
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
 var _ = net.Listen
 var _ = os.Exit
-var storage = make(map[string]string) // 전역 변수로 데이터 저장소 선언
-var expireStorage = make(map[string]ValueWIthTTL)
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests
@@ -26,6 +25,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create a single store instance for all connections
+	dataStore := store.NewStore()
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -33,7 +35,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		go handleConnection(conn)
+		go handleConnection(conn, dataStore)
 	}
 }
 
@@ -56,7 +58,7 @@ func parseRESP(reader *bufio.Reader) (interface{}, error) {
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, dataStore *store.Store) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
@@ -88,9 +90,8 @@ func handleConnection(conn net.Conn) {
 						expiry := arr[4].(string)
 
 						if strings.ToUpper(unit) == "PX" {
-							atoi, _ := strconv.Atoi(expiry)
-							obj := ValueWIthTTL{value, time.Now().Add(time.Duration(atoi) * time.Millisecond)}
-							expireStorage[key] = obj
+							px, _ := strconv.Atoi(expiry)
+							dataStore.SET(key, value, &px)
 							conn.Write([]byte("+OK\r\n"))
 							continue
 						}
@@ -98,28 +99,16 @@ func handleConnection(conn net.Conn) {
 						key := arr[1].(string)
 						value := arr[2].(string)
 
-						storage[key] = value
+						dataStore.SET(key, value, nil)
 						conn.Write([]byte("+OK\r\n"))
 					}
 				case "GET":
 					if len(arr) >= 2 {
 						key := arr[1].(string)
+						value := dataStore.GET(key)
 
-						objValue, objExists := expireStorage[key]
-						strValue, strExists := storage[key]
-
-						if objExists {
-							now := time.Now()
-
-							if objValue.ExpireAt.Before(now) {
-								delete(expireStorage, key)
-								conn.Write([]byte("$-1\r\n")) // null bulk string
-							} else {
-								v := objValue.Value
-								conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v)))
-							}
-						} else if strExists {
-							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(strValue), strValue)))
+						if value != nil {
+							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(*value), *value)))
 						} else {
 							conn.Write([]byte("$-1\r\n")) // null bulk string
 						}
@@ -211,9 +200,4 @@ func readLine(reader *bufio.Reader) (string, error) {
 	}
 
 	return line[:len(line)-1], nil
-}
-
-type ValueWIthTTL struct {
-	Value    string
-	ExpireAt time.Time // 만료 일자
 }
