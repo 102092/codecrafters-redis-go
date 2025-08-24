@@ -8,12 +8,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
 var _ = net.Listen
 var _ = os.Exit
 var storage = make(map[string]string) // 전역 변수로 데이터 저장소 선언
+var expireStorage = make(map[string]ValueWIthTTL)
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests
@@ -79,7 +81,20 @@ func handleConnection(conn net.Conn) {
 
 					}
 				case "SET":
-					if len(arr) >= 2 {
+					if len(arr) >= 5 {
+						key := arr[1].(string)
+						value := arr[2].(string)
+						unit := arr[3].(string)
+						expiry := arr[4].(string)
+
+						if strings.ToUpper(unit) == "PX" {
+							atoi, _ := strconv.Atoi(expiry)
+							obj := ValueWIthTTL{value, time.Now().Add(time.Duration(atoi) * time.Millisecond)}
+							expireStorage[key] = obj
+							conn.Write([]byte("+OK\r\n"))
+							continue
+						}
+					} else if len(arr) >= 2 {
 						key := arr[1].(string)
 						value := arr[2].(string)
 
@@ -90,10 +105,21 @@ func handleConnection(conn net.Conn) {
 					if len(arr) >= 2 {
 						key := arr[1].(string)
 
-						value, exists := storage[key]
+						objValue, objExists := expireStorage[key]
+						strValue, strExists := storage[key]
 
-						if exists {
-							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)))
+						if objExists {
+							now := time.Now()
+
+							if objValue.ExpireAt.Before(now) {
+								delete(expireStorage, key)
+								conn.Write([]byte("$-1\r\n")) // null bulk string
+							} else {
+								v := objValue.Value
+								conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v)))
+							}
+						} else if strExists {
+							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(strValue), strValue)))
 						} else {
 							conn.Write([]byte("$-1\r\n")) // null bulk string
 						}
@@ -185,4 +211,9 @@ func readLine(reader *bufio.Reader) (string, error) {
 	}
 
 	return line[:len(line)-1], nil
+}
+
+type ValueWIthTTL struct {
+	Value    string
+	ExpireAt time.Time // 만료 일자
 }
