@@ -13,6 +13,7 @@ import (
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
 var _ = net.Listen
 var _ = os.Exit
+var storage = make(map[string]string) // 전역 변수로 데이터 저장소 선언
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests
@@ -77,6 +78,26 @@ func handleConnection(conn net.Conn) {
 						}
 
 					}
+				case "SET":
+					if len(arr) >= 2 {
+						key := arr[1].(string)
+						value := arr[2].(string)
+
+						storage[key] = value
+						conn.Write([]byte("+OK\r\n"))
+					}
+				case "GET":
+					if len(arr) >= 2 {
+						key := arr[1].(string)
+
+						value, exists := storage[key]
+
+						if exists {
+							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)))
+						} else {
+							conn.Write([]byte("$-1\r\n")) // null bulk string
+						}
+					}
 				}
 			}
 		}
@@ -89,7 +110,8 @@ func readSimpleString(reader *bufio.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return line, nil
+	return line,
+		nil
 }
 
 // Array 읽기: *2\r\n$4\r\nPING\r\n$4\r\ntest\r\n
