@@ -725,7 +725,7 @@ func TestLLenHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LLEN on non-existent key should not fail: %v", err)
 	}
-	
+
 	if result != 0 {
 		t.Errorf("Expected 0 for non-existent key, got %v", result)
 	}
@@ -733,12 +733,12 @@ func TestLLenHandler(t *testing.T) {
 	// 테스트 케이스 2: 단일 요소 리스트
 	singleKey := "single_list"
 	dataStore.RPUSH(singleKey, "only_one")
-	
+
 	result, err = handler.Execute([]string{singleKey}, dataStore)
 	if err != nil {
 		t.Fatalf("LLEN on single element list failed: %v", err)
 	}
-	
+
 	if result != 1 {
 		t.Errorf("Expected 1 for single element list, got %v", result)
 	}
@@ -746,12 +746,12 @@ func TestLLenHandler(t *testing.T) {
 	// 테스트 케이스 3: 다중 요소 리스트 (RPUSH 사용)
 	multiKey := "multi_list"
 	dataStore.RPUSH(multiKey, "a", "b", "c", "d", "e")
-	
+
 	result, err = handler.Execute([]string{multiKey}, dataStore)
 	if err != nil {
 		t.Fatalf("LLEN on multi element list failed: %v", err)
 	}
-	
+
 	if result != 5 {
 		t.Errorf("Expected 5 for multi element list, got %v", result)
 	}
@@ -759,39 +759,39 @@ func TestLLenHandler(t *testing.T) {
 	// 테스트 케이스 4: LPUSH로 생성된 리스트
 	lpushKey := "lpush_list"
 	dataStore.LPUSH(lpushKey, "first", "second", "third")
-	
+
 	result, err = handler.Execute([]string{lpushKey}, dataStore)
 	if err != nil {
 		t.Fatalf("LLEN on LPUSH created list failed: %v", err)
 	}
-	
+
 	if result != 3 {
 		t.Errorf("Expected 3 for LPUSH created list, got %v", result)
 	}
 
 	// 테스트 케이스 5: 동적으로 변화하는 리스트 길이
 	dynamicKey := "dynamic_list"
-	
+
 	// 초기 상태: 키 없음
 	result, err = handler.Execute([]string{dynamicKey}, dataStore)
 	if err != nil || result != 0 {
 		t.Errorf("Initial state should be 0, got %v (err: %v)", result, err)
 	}
-	
+
 	// 요소 추가 후 길이 확인
 	dataStore.RPUSH(dynamicKey, "item1")
 	result, err = handler.Execute([]string{dynamicKey}, dataStore)
 	if err != nil || result != 1 {
 		t.Errorf("After 1 RPUSH should be 1, got %v (err: %v)", result, err)
 	}
-	
+
 	// 더 추가
 	dataStore.RPUSH(dynamicKey, "item2", "item3")
 	result, err = handler.Execute([]string{dynamicKey}, dataStore)
 	if err != nil || result != 3 {
 		t.Errorf("After adding 2 more should be 3, got %v (err: %v)", result, err)
 	}
-	
+
 	// LPUSH로도 추가
 	dataStore.LPUSH(dynamicKey, "front1", "front2")
 	result, err = handler.Execute([]string{dynamicKey}, dataStore)
@@ -802,34 +802,34 @@ func TestLLenHandler(t *testing.T) {
 	// 테스트 케이스 6: 대용량 리스트 (성능 테스트)
 	largeKey := "large_list"
 	expectedSize := 1000
-	
+
 	// 큰 리스트 생성
 	for i := 0; i < expectedSize; i++ {
 		dataStore.RPUSH(largeKey, "item")
 	}
-	
+
 	result, err = handler.Execute([]string{largeKey}, dataStore)
 	if err != nil {
 		t.Fatalf("LLEN on large list failed: %v", err)
 	}
-	
+
 	if result != expectedSize {
 		t.Errorf("Expected %d for large list, got %v", expectedSize, result)
 	}
 
 	// 테스트 케이스 7: 에러 케이스들
-	
+
 	// 인자 없음
 	result, err = handler.Execute([]string{}, dataStore)
 	if err == nil {
 		t.Fatal("Expected error for no arguments")
 	}
-	
+
 	// 에러 타입 검증
 	if _, ok := err.(*WrongNumberOfArgumentsError); !ok {
 		t.Errorf("Expected WrongNumberOfArgumentsError, got %T", err)
 	}
-	
+
 	// 인자 과다
 	result, err = handler.Execute([]string{"key1", "key2"}, dataStore)
 	if err == nil {
@@ -838,36 +838,36 @@ func TestLLenHandler(t *testing.T) {
 
 	// 테스트 케이스 8: 다른 핸들러와의 상호작용 테스트
 	interactionKey := "interaction_test"
-	
+
 	// LLEN → 0
 	result, _ = handler.Execute([]string{interactionKey}, dataStore)
 	if result != 0 {
 		t.Errorf("Initial LLEN should be 0, got %v", result)
 	}
-	
+
 	// RPUSH → 길이 증가
 	rpushHandler := &RPushHandler{}
 	rpushHandler.Execute([]string{interactionKey, "a", "b"}, dataStore)
-	
+
 	result, _ = handler.Execute([]string{interactionKey}, dataStore)
 	if result != 2 {
 		t.Errorf("After RPUSH 2 items should be 2, got %v", result)
 	}
-	
+
 	// LPUSH → 길이 더 증가
 	lpushHandler := &LPushHandler{}
 	lpushHandler.Execute([]string{interactionKey, "x", "y", "z"}, dataStore)
-	
+
 	result, _ = handler.Execute([]string{interactionKey}, dataStore)
 	if result != 5 {
 		t.Errorf("After LPUSH 3 more items should be 5, got %v", result)
 	}
-	
+
 	// LRANGE로 내용 확인 (LLEN이 정확한지 검증)
 	lrangeHandler := &LRangeHandler{}
 	rangeResult, _ := lrangeHandler.Execute([]string{interactionKey, "0", "-1"}, dataStore)
 	actualItems := rangeResult.([]string)
-	
+
 	if len(actualItems) != result {
 		t.Errorf("LLEN result %v doesn't match LRANGE length %d", result, len(actualItems))
 	}
@@ -875,62 +875,65 @@ func TestLLenHandler(t *testing.T) {
 	// 테스트 케이스 9: 빈 문자열 요소가 있는 리스트
 	emptyStringKey := "empty_string_test"
 	dataStore.RPUSH(emptyStringKey, "", "non-empty", "", "another")
-	
+
 	result, err = handler.Execute([]string{emptyStringKey}, dataStore)
 	if err != nil {
 		t.Fatalf("LLEN with empty string elements failed: %v", err)
 	}
-	
+
 	if result != 4 {
 		t.Errorf("List with empty strings should have length 4, got %v", result)
 	}
 }
 
 // TestLPopHandler는 LPOP 명령어 핸들러를 테스트합니다.
+// 단일 요소 제거와 multiple elements 제거 기능을 모두 테스트합니다.
 func TestLPopHandler(t *testing.T) {
 	handler := &LPopHandler{}
 	dataStore := store.NewStore()
+
+	// === 단일 요소 LPOP 테스트 ===
 
 	// 테스트 케이스 1: 존재하지 않는 키
 	result, err := handler.Execute([]string{"nonexistent"}, dataStore)
 	if err != nil {
 		t.Fatalf("LPOP on non-existent key should not fail: %v", err)
 	}
-	
+
 	if result != nil {
 		t.Errorf("Expected nil for non-existent key, got %v", result)
 	}
 
 	// 테스트 케이스 2: 단일 요소 리스트에서 LPOP
 	dataStore.RPUSH("single", "only_one")
-	
+
 	result, err = handler.Execute([]string{"single"}, dataStore)
 	if err != nil {
 		t.Fatalf("LPOP on single element list failed: %v", err)
 	}
-	
+
 	if result != "only_one" {
 		t.Errorf("Expected 'only_one', got %v", result)
 	}
-	
+
 	// 키가 삭제되었는지 확인
 	length := dataStore.LLEN("single")
 	if length != 0 {
 		t.Errorf("Key should be deleted after popping last element, but LLEN is %d", length)
 	}
 
-	// 테스트 케이스 3: 다중 요소 리스트에서 LPOP
+	// 테스트 케이스 3: 다중 요소 리스트에서 단일 LPOP
 	dataStore.RPUSH("multi", "first", "second", "third")
-	
+
 	result, err = handler.Execute([]string{"multi"}, dataStore)
 	if err != nil {
 		t.Fatalf("LPOP on multi element list failed: %v", err)
 	}
-	
+
 	if result != "first" {
 		t.Errorf("Expected 'first', got %v", result)
 	}
-	
+
 	// 남은 요소들 확인
 	remaining := dataStore.LRANGE("multi", 0, -1)
 	expected := []string{"second", "third"}
@@ -938,125 +941,158 @@ func TestLPopHandler(t *testing.T) {
 		t.Errorf("Expected %v, got %v", expected, remaining)
 	}
 
-	// 테스트 케이스 4: LPUSH 후 LPOP (스택 동작)
-	dataStore.LPUSH("stack", "bottom", "middle", "top")
-	
-	result, err = handler.Execute([]string{"stack"}, dataStore)
+	// === 다중 요소 LPOP 테스트 (Redis 6.2+ 기능) ===
+
+	// 테스트 케이스 4: LPOP key count (여러 요소 제거)
+	dataStore.RPUSH("multicount", "a", "b", "c", "d", "e")
+
+	result, err = handler.Execute([]string{"multicount", "3"}, dataStore)
 	if err != nil {
-		t.Fatalf("LPOP after LPUSH failed: %v", err)
-	}
-	
-	if result != "top" {
-		t.Errorf("Expected 'top' (LIFO), got %v", result)
-	}
-	
-	// 두 번째 LPOP
-	result, err = handler.Execute([]string{"stack"}, dataStore)
-	if result != "middle" {
-		t.Errorf("Expected 'middle', got %v", result)
+		t.Fatalf("LPOP with count failed: %v", err)
 	}
 
-	// 테스트 케이스 5: 모든 요소를 LPOP으로 제거
-	dataStore.RPUSH("exhaust", "a", "b")
-	
-	// 첫 번째 LPOP
-	result1, _ := handler.Execute([]string{"exhaust"}, dataStore)
-	if result1 != "a" {
-		t.Errorf("Expected 'a', got %v", result1)
-	}
-	
-	// 두 번째 LPOP (마지막 요소)
-	result2, _ := handler.Execute([]string{"exhaust"}, dataStore)
-	if result2 != "b" {
-		t.Errorf("Expected 'b', got %v", result2)
-	}
-	
-	// 세 번째 LPOP (빈 리스트)
-	result3, err := handler.Execute([]string{"exhaust"}, dataStore)
-	if err != nil {
-		t.Fatalf("LPOP on empty list should not error: %v", err)
-	}
-	if result3 != nil {
-		t.Errorf("Expected nil for empty list, got %v", result3)
+	// 결과는 []string이어야 함
+	resultArray, ok := result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
 	}
 
-	// 테스트 케이스 6: 에러 케이스들
-	
-	// 인자 없음
-	_, err = handler.Execute([]string{}, dataStore)
+	expectedArray := []string{"a", "b", "c"}
+	if !equalStringSlices(resultArray, expectedArray) {
+		t.Errorf("Expected %v, got %v", expectedArray, resultArray)
+	}
+
+	// 남은 요소들 확인
+	remaining = dataStore.LRANGE("multicount", 0, -1)
+	expected = []string{"d", "e"}
+	if !equalStringSlices(remaining, expected) {
+		t.Errorf("Expected remaining %v, got %v", expected, remaining)
+	}
+
+	// 테스트 케이스 5: count가 리스트 길이보다 클 때 (모든 요소 제거)
+	dataStore.RPUSH("overcount", "x", "y")
+
+	result, err = handler.Execute([]string{"overcount", "5"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPOP with count > length failed: %v", err)
+	}
+
+	resultArray, ok = result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
+	}
+
+	expectedArray = []string{"x", "y"}
+	if !equalStringSlices(resultArray, expectedArray) {
+		t.Errorf("Expected %v, got %v", expectedArray, resultArray)
+	}
+
+	// 키가 삭제되었는지 확인
+	length = dataStore.LLEN("overcount")
+	if length != 0 {
+		t.Errorf("Key should be deleted after popping all elements, but LLEN is %d", length)
+	}
+
+	// 테스트 케이스 6: 존재하지 않는 키에 count 적용
+	result, err = handler.Execute([]string{"nonexistent2", "3"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPOP with count on non-existent key should not fail: %v", err)
+	}
+
+	resultArray, ok = result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
+	}
+
+	if len(resultArray) != 0 {
+		t.Errorf("Expected empty array for non-existent key, got %v", resultArray)
+	}
+
+	// 테스트 케이스 7: count = 0
+	dataStore.RPUSH("zerocount", "a", "b", "c")
+
+	result, err = handler.Execute([]string{"zerocount", "0"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPOP with count=0 failed: %v", err)
+	}
+
+	resultArray, ok = result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
+	}
+
+	if len(resultArray) != 0 {
+		t.Errorf("Expected empty array for count=0, got %v", resultArray)
+	}
+
+	// 원래 리스트가 변경되지 않았는지 확인
+	length = dataStore.LLEN("zerocount")
+	if length != 3 {
+		t.Errorf("List should be unchanged after count=0, but LLEN is %d", length)
+	}
+
+	// 테스트 케이스 8: 음수 count
+	result, err = handler.Execute([]string{"zerocount", "-1"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPOP with negative count failed: %v", err)
+	}
+
+	resultArray, ok = result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
+	}
+
+	if len(resultArray) != 0 {
+		t.Errorf("Expected empty array for negative count, got %v", resultArray)
+	}
+
+	// 테스트 케이스 9: LPUSH 후 LPOP count (스택 동작)
+	dataStore.LPUSH("stackcount", "bottom", "middle", "top")
+
+	result, err = handler.Execute([]string{"stackcount", "2"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPOP with count after LPUSH failed: %v", err)
+	}
+
+	resultArray, ok = result.([]string)
+	if !ok {
+		t.Fatalf("Expected []string result, got %T", result)
+	}
+
+	expectedArray = []string{"top", "middle"}
+	if !equalStringSlices(resultArray, expectedArray) {
+		t.Errorf("Expected %v, got %v", expectedArray, resultArray)
+	}
+
+	// === 에러 테스트 ===
+
+	// 테스트 케이스 10: 잘못된 인자 개수 (인자 없음)
+	result, err = handler.Execute([]string{}, dataStore)
 	if err == nil {
 		t.Fatal("Expected error for no arguments")
 	}
-	
-	// 에러 타입 검증
+
 	if _, ok := err.(*WrongNumberOfArgumentsError); !ok {
 		t.Errorf("Expected WrongNumberOfArgumentsError, got %T", err)
 	}
-	
-	// 인자 과다
-	_, err = handler.Execute([]string{"key1", "key2"}, dataStore)
+
+	// 테스트 케이스 11: 잘못된 인자 개수 (인자 과다)
+	result, err = handler.Execute([]string{"key", "count", "extra"}, dataStore)
 	if err == nil {
 		t.Fatal("Expected error for too many arguments")
 	}
 
-	// 테스트 케이스 7: 다른 핸들러와의 상호작용
-	interactionKey := "interaction"
-	
-	// RPUSH로 요소 추가
-	rpushHandler := &RPushHandler{}
-	rpushHandler.Execute([]string{interactionKey, "1", "2", "3"}, dataStore)
-	
-	// LPOP로 하나씩 제거
-	for i, expected := range []string{"1", "2", "3"} {
-		result, err := handler.Execute([]string{interactionKey}, dataStore)
-		if err != nil {
-			t.Fatalf("LPOP iteration %d failed: %v", i, err)
-		}
-		if result != expected {
-			t.Errorf("Iteration %d: expected %s, got %v", i, expected, result)
-		}
-	}
-	
-	// LLEN으로 확인 (키가 삭제되어야 함)
-	llengHandler := &LLenHandler{}
-	lengthResult, _ := llengHandler.Execute([]string{interactionKey}, dataStore)
-	if lengthResult != 0 {
-		t.Errorf("Expected length 0 after all pops, got %v", lengthResult)
+	if _, ok := err.(*WrongNumberOfArgumentsError); !ok {
+		t.Errorf("Expected WrongNumberOfArgumentsError, got %T", err)
 	}
 
-	// 테스트 케이스 8: LPUSH와 LPOP 조합 (스택)
-	stackKey := "lifo_stack"
-	lpushHandler := &LPushHandler{}
-	
-	// LPUSH로 요소들 추가
-	lpushHandler.Execute([]string{stackKey, "first", "second", "third"}, dataStore)
-	
-	// LPOP로 제거 (LIFO 순서)
-	for i, expected := range []string{"third", "second", "first"} {
-		result, err := handler.Execute([]string{stackKey}, dataStore)
-		if err != nil {
-			t.Fatalf("Stack LPOP iteration %d failed: %v", i, err)
-		}
-		if result != expected {
-			t.Errorf("Stack iteration %d: expected %s, got %v", i, expected, result)
-		}
+	// 테스트 케이스 12: 잘못된 count 값 (문자열)
+	result, err = handler.Execute([]string{"key", "invalid"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for invalid count")
 	}
 
-	// 테스트 케이스 9: 빈 문자열 처리
-	dataStore.RPUSH("empty_string", "", "non-empty")
-	
-	result, err = handler.Execute([]string{"empty_string"}, dataStore)
-	if err != nil {
-		t.Fatalf("LPOP with empty string failed: %v", err)
-	}
-	
-	if result != "" {
-		t.Errorf("Expected empty string, got %v", result)
-	}
-	
-	// 두 번째 요소 확인
-	result, err = handler.Execute([]string{"empty_string"}, dataStore)
-	if result != "non-empty" {
-		t.Errorf("Expected 'non-empty', got %v", result)
+	if _, ok := err.(*InvalidArgumentError); !ok {
+		t.Errorf("Expected InvalidArgumentError, got %T", err)
 	}
 }

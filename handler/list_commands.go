@@ -113,23 +113,45 @@ func (h *LLenHandler) Execute(args []string, store *store.Store) (interface{}, e
 type LPopHandler struct{}
 
 // Execute는 LPOP 명령어를 실행합니다.
+// Redis 6.2+ 구문: LPOP key [count]
 func (h *LPopHandler) Execute(args []string, store *store.Store) (interface{}, error) {
-	// 정확한 인자 개수 검증 (key 하나만 필요)
-	if len(args) != 1 {
+	// 인자 개수 검증 (key 또는 key + count)
+	if len(args) < 1 || len(args) > 2 {
 		return nil, &WrongNumberOfArgumentsError{Command: "lpop"}
 	}
 
 	key := args[0]
+	var count *int = nil
 
-	// 저장소에서 왼쪽 끝 요소 제거 및 반환
-	result := store.LPOP(key)
-
-	// nil이면 nil 반환 (Null Bulk String), 값이 있으면 문자열 반환
-	if result == nil {
-		return nil, nil
+	// count 인자가 있는 경우 파싱
+	if len(args) == 2 {
+		countValue, err := strconv.Atoi(args[1])
+		if err != nil {
+			return nil, &InvalidArgumentError{
+				Message: "value is not an integer or out of range",
+			}
+		}
+		count = &countValue
 	}
 
-	return *result, nil
+	// 저장소에서 왼쪽 끝 요소(들) 제거 및 반환
+	result := store.LPOP(key, count)
+
+	// count에 따라 반환 타입 처리
+	if count == nil {
+		// 단일 요소 모드: *string 반환값을 적절히 처리
+		if ptr, ok := result.(*string); ok {
+			if ptr == nil {
+				return nil, nil
+			}
+			return *ptr, nil
+		} else if result == nil {
+			return nil, nil
+		}
+	}
+
+	// count 지정 모드: []string 그대로 반환
+	return result, nil
 }
 
 // TODO: 향후 구현할 List 명령어들

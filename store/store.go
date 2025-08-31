@@ -253,75 +253,87 @@ func (s *Store) LLEN(key string) int {
 // LPOP은 Redis LPOP 명령어를 구현합니다.
 // 리스트의 왼쪽 끝(head)에서 요소를 제거하고 반환합니다.
 //
-// 성능 특성:
-//   - Go 슬라이스 특성상 O(N) 복잡도 (N은 리스트 크기)
-//   - 실제 Redis는 링크드 리스트로 O(1) 달성
-//   - 첫 번째 요소 제거 후 나머지 요소들을 앞으로 이동
-//
-// 메모리 할당 패턴:
-//   - 새 슬라이스 생성으로 메모리 재할당 발생
-//   - 기존 슬라이스의 첫 번째 요소 제외한 나머지 복사
-//   - GC 압박이 RPOP보다 높음
-//
-// 동작 방식:
-//   - 키가 존재하지 않으면 nil 반환
-//   - 빈 리스트면 nil 반환
-//   - 요소가 있으면 첫 번째 요소 제거 후 반환
-//   - 리스트가 비게 되면 키 자체를 삭제 (Redis 표준 동작)
-//
 // 매개변수:
 //   - key: 리스트 키
+//   - count: 제거할 요소 개수 (옵셔널, nil이면 1개)
 //
 // 반환값:
-//   - *string: 제거된 요소 (nil이면 키가 없거나 빈 리스트)
-//
-// Redis 호환성:
-//   - 존재하지 않는 키: nil 반환
-//   - 빈 리스트: nil 반환
-//   - 마지막 요소 제거 시 키 자동 삭제
+//   - interface{}: count에 따라 *string 또는 []string 반환
+//   - count가 nil: *string (단일 요소 또는 nil)
+//   - count가 지정됨: []string (빈 배열 가능)
 //
 // 예시:
-//   - 키가 없음 → nil
-//   - ["a", "b", "c"] → "a" 반환, 리스트는 ["b", "c"]가 됨
-//   - ["only"] → "only" 반환, 키 삭제됨
+//   - LPOP key → "a" (단일 요소)
+//   - LPOP key 2 → ["a", "b"] (여러 요소)
+//   - LPOP key 10 → ["a", "b", "c"] (count > 길이일 때 모든 요소)
 //
-// 시간 복잡도: O(N) (N=리스트 크기)
+// 시간 복잡도: O(N) (N=제거할 요소 개수)
 // 공간 복잡도: O(N) (새 슬라이스 할당)
-//
-// 사용 사례:
-//   - 스택 구현 (LPUSH + LPOP = LIFO)
-//   - 큐 구현 (RPUSH + LPOP = FIFO)
-//   - 작업 큐에서 작업 소비
-//   - 임시 데이터 처리
-func (s *Store) LPOP(key string) *string {
+func (s *Store) LPOP(key string, count *int) interface{} {
 	// 리스트 존재 여부 확인
 	list, exists := s.listStorage[key]
 	if !exists {
-		// 키가 존재하지 않으면 nil 반환
-		return nil
+		// 키가 존재하지 않는 경우
+		if count == nil {
+			return nil // 단일 요소 모드: nil 반환
+		}
+		return []string{} // 다중 요소 모드: 빈 배열 반환
 	}
 
-	// 빈 리스트인 경우 nil 반환
+	// 빈 리스트인 경우
 	if len(list) == 0 {
-		return nil
+		if count == nil {
+			return nil // 단일 요소 모드: nil 반환
+		}
+		return []string{} // 다중 요소 모드: 빈 배열 반환
 	}
 
-	// 첫 번째 요소 추출
-	firstElement := list[0]
+	// count가 nil이면 단일 요소 제거 (기존 동작)
+	if count == nil {
+		firstElement := list[0]
 
-	// 리스트에 요소가 하나뿐이면 키를 완전히 삭제
-	if len(list) == 1 {
-		delete(s.listStorage, key)
+		// 리스트에 요소가 하나뿐이면 키를 완전히 삭제
+		if len(list) == 1 {
+			delete(s.listStorage, key)
+			return &firstElement
+		}
+
+		// 첫 번째 요소를 제외한 나머지로 새 슬라이스 생성
+		newList := make([]string, len(list)-1)
+		copy(newList, list[1:])
+		s.listStorage[key] = newList
+
 		return &firstElement
 	}
 
-	// 첫 번째 요소를 제외한 나머지로 새 슬라이스 생성
-	// list[1:]은 두 번째 요소부터 끝까지의 슬라이스
-	newList := make([]string, len(list)-1)
-	copy(newList, list[1:])
+	// count가 지정된 경우 (다중 요소 제거)
+	actualCount := *count
 
-	// 저장소 업데이트
-	s.listStorage[key] = newList
+	// count가 0 이하인 경우 빈 배열 반환
+	if actualCount <= 0 {
+		return []string{}
+	}
 
-	return &firstElement
+	// 실제 제거할 요소 개수 결정 (리스트 길이와 count 중 작은 값)
+	removeCount := actualCount
+	if removeCount > len(list) {
+		removeCount = len(list)
+	}
+
+	// 제거할 요소들 추출
+	removedElements := make([]string, removeCount)
+	copy(removedElements, list[:removeCount])
+
+	// 리스트에서 모든 요소를 제거하는 경우 키 삭제
+	if removeCount >= len(list) {
+		delete(s.listStorage, key)
+		return removedElements
+	}
+
+	// 일부 요소만 제거하는 경우 나머지 요소들로 새 슬라이스 생성
+	remainingElements := make([]string, len(list)-removeCount)
+	copy(remainingElements, list[removeCount:])
+	s.listStorage[key] = remainingElements
+
+	return removedElements
 }
