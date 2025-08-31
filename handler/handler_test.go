@@ -388,6 +388,187 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
+// TestLPushHandler는 LPUSH 명령어 핸들러를 종합적으로 테스트합니다.
+//
+// **테스트하는 케이스:**
+//  1. 새 리스트에 단일 값 추가
+//  2. 기존 리스트에 다중 값 추가
+//  3. 순서 보장 검증 (RPUSH와 비교)
+//  4. 잘못된 인자 개수 처리
+//  5. 빈 인자 처리
+//  6. 대용량 데이터 처리 (성능 테스트)
+//
+// **LPUSH 명령어의 특징 검증:**
+//   - 정수 반환 (리스트 길이)
+//   - 새 키 생성 시 빈 리스트부터 시작
+//   - 원자적 다중 값 추가
+//   - LIFO 순서 보장
+func TestLPushHandler(t *testing.T) {
+	handler := &LPushHandler{}
+	dataStore := store.NewStore()
+
+	// 테스트 케이스 1: 새 리스트에 단일 값 추가
+	// 이 케이스는 가장 기본적이며 성능상 가장 빠름
+	result, err := handler.Execute([]string{"newlist", "first"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH on new list failed: %v", err)
+	}
+
+	// 길이 검증
+	if result != 1 {
+		t.Errorf("Expected length 1, got %v", result)
+	}
+
+	// 실제 저장된 값 검증 (Store 내부 동작 확인)
+	actualList := dataStore.LRANGE("newlist", 0, -1)
+	expected := []string{"first"}
+	if !equalStringSlices(actualList, expected) {
+		t.Errorf("Expected %v, got %v", expected, actualList)
+	}
+
+	// 테스트 케이스 2: 기존 리스트에 단일 값 추가
+	// LPUSH의 핵심 동작: 앞쪽 삽입 검증
+	result, err = handler.Execute([]string{"newlist", "second"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH to existing list failed: %v", err)
+	}
+
+	if result != 2 {
+		t.Errorf("Expected length 2, got %v", result)
+	}
+
+	// 순서 확인: "second"가 앞에 와야 함
+	actualList = dataStore.LRANGE("newlist", 0, -1)
+	expected = []string{"second", "first"}
+	if !equalStringSlices(actualList, expected) {
+		t.Errorf("Expected %v, got %v", expected, actualList)
+	}
+
+	// 테스트 케이스 3: 다중 값 추가 (핵심 기능!)
+	// 이 케이스가 LPUSH의 복잡한 순서 로직을 검증
+	result, err = handler.Execute([]string{"multilist", "a", "b", "c"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH with multiple values failed: %v", err)
+	}
+
+	if result != 3 {
+		t.Errorf("Expected length 3, got %v", result)
+	}
+
+	// **중요!** Redis LPUSH의 실제 동작:
+	// LPUSH key "a" "b" "c" → ["c", "b", "a"] (역순!)
+	// 각 값이 순서대로 맨 앞에 추가되기 때문
+	actualList = dataStore.LRANGE("multilist", 0, -1)
+	expected = []string{"c", "b", "a"}
+	if !equalStringSlices(actualList, expected) {
+		t.Errorf("Expected %v, got %v", expected, actualList)
+	}
+
+	// 테스트 케이스 4: 기존 리스트에 다중 값 추가 (복합 시나리오)
+	// 이 케이스가 실제 프로덕션에서 가장 흔한 패턴
+	result, err = handler.Execute([]string{"multilist", "x", "y"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH multiple values to existing list failed: %v", err)
+	}
+
+	if result != 5 {
+		t.Errorf("Expected length 5, got %v", result)
+	}
+
+	// 최종 순서: [y, x, c, b, a]
+	// 기존: [c, b, a], 추가: "x" "y" → y가 맨 앞, x가 그 다음
+	actualList = dataStore.LRANGE("multilist", 0, -1)
+	expected = []string{"y", "x", "c", "b", "a"}
+	if !equalStringSlices(actualList, expected) {
+		t.Errorf("Expected %v, got %v", expected, actualList)
+	}
+
+	// 테스트 케이스 5: RPUSH와의 동작 차이 검증 (아키텍처 이해 중요!)
+	// 같은 값들을 RPUSH와 LPUSH로 추가했을 때 결과 비교
+	rpushHandler := &RPushHandler{}
+
+	// RPUSH로 값 추가
+	rpushHandler.Execute([]string{"rpush_test", "1", "2", "3"}, dataStore)
+	rpushResult := dataStore.LRANGE("rpush_test", 0, -1)
+
+	// LPUSH로 같은 값 추가
+	handler.Execute([]string{"lpush_test", "1", "2", "3"}, dataStore)
+	lpushResult := dataStore.LRANGE("lpush_test", 0, -1)
+
+	// 결과가 달라야 함
+	if equalStringSlices(rpushResult, lpushResult) {
+		t.Error("RPUSH and LPUSH should produce different results")
+	}
+
+	// RPUSH: [1, 2, 3] (순서 그대로), LPUSH: [3, 2, 1] (역순!)
+	expectedRpush := []string{"1", "2", "3"}
+	expectedLpush := []string{"3", "2", "1"} // LPUSH는 역순!
+
+	if !equalStringSlices(rpushResult, expectedRpush) {
+		t.Errorf("RPUSH result: expected %v, got %v", expectedRpush, rpushResult)
+	}
+	if !equalStringSlices(lpushResult, expectedLpush) {
+		t.Errorf("LPUSH result: expected %v, got %v", expectedLpush, lpushResult)
+	}
+
+	// 테스트 케이스 6: 에러 케이스들
+
+	// 인자 부족 (key만 있고 value 없음)
+	result, err = handler.Execute([]string{"onlykey"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for insufficient args")
+	}
+
+	// 에러 타입 검증
+	if _, ok := err.(*WrongNumberOfArgumentsError); !ok {
+		t.Errorf("Expected WrongNumberOfArgumentsError, got %T", err)
+	}
+
+	// 빈 인자 배열
+	result, err = handler.Execute([]string{}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for no args")
+	}
+
+	// 테스트 케이스 7: 성능 고려사항 테스트
+	// 대용량 기존 리스트에 추가 시 성능 특성 확인
+	// (실제 벤치마크는 아니지만 동작 검증)
+
+	// 큰 리스트 생성
+	largeListKey := "large_list"
+	for i := 0; i < 1000; i++ {
+		dataStore.RPUSH(largeListKey, "item")
+	}
+
+	// 큰 리스트에 LPUSH (O(N) 동작 확인)
+	result, err = handler.Execute([]string{largeListKey, "new_item"}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH to large list failed: %v", err)
+	}
+
+	if result != 1001 {
+		t.Errorf("Expected length 1001, got %v", result)
+	}
+
+	// 첫 번째 요소가 새로 추가된 값인지 확인
+	firstItem := dataStore.LRANGE(largeListKey, 0, 0)
+	if len(firstItem) != 1 || firstItem[0] != "new_item" {
+		t.Errorf("Expected first item to be 'new_item', got %v", firstItem)
+	}
+
+	// 테스트 케이스 8: 빈 문자열 처리 (엣지 케이스)
+	result, err = handler.Execute([]string{"empty_test", "", "non_empty", ""}, dataStore)
+	if err != nil {
+		t.Fatalf("LPUSH with empty strings failed: %v", err)
+	}
+
+	expectedEmpty := []string{"", "non_empty", ""}
+	actualEmpty := dataStore.LRANGE("empty_test", 0, -1)
+	if !equalStringSlices(actualEmpty, expectedEmpty) {
+		t.Errorf("Expected %v, got %v", expectedEmpty, actualEmpty)
+	}
+}
+
 // TestCommandRegistry는 명령어 레지스트리 시스템을 테스트합니다.
 //
 // 테스트하는 케이스:
@@ -405,8 +586,8 @@ func TestCommandRegistry(t *testing.T) {
 	dataStore := store.NewStore()
 	registry := NewCommandRegistry(dataStore)
 
-	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인 (LRANGE 추가)
-	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LRANGE"}
+	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인 (LPUSH 추가)
+	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LPUSH", "LRANGE"}
 	for _, cmd := range expectedCommands {
 		if !registry.HasCommand(cmd) {
 			t.Errorf("Command %s not registered", cmd)

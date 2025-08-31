@@ -162,3 +162,63 @@ func (s *Store) LRANGE(key string, start, stop int) []string {
 	// Go 슬라이스는 [start:stop+1] 형태로 사용 (stop+1은 제외)
 	return list[start : stop+1]
 }
+
+// LPUSH는 Redis LPUSH 명령어를 구현합니다.
+// 리스트의 왼쪽 끝(head)에 하나 이상의 값을 추가합니다.
+//
+// **동작 방식:**
+//   - 키가 없으면 새로운 리스트 생성 후 값 추가
+//   - 키가 있으면 기존 리스트 앞쪽에 값 추가 (prepend)
+//   - 여러 값을 한 번에 추가 가능 (원자적 연산)
+//
+// **매개변수:**
+//   - key: 리스트 키
+//   - values: 추가할 값들 (가변 인자, 왼쪽부터 순서대로 추가)
+//
+// **반환값:**
+//   - int: 추가 후 리스트의 총 길이
+//
+// **Redis 호환성:**
+//   - 값 추가 순서: values[0]이 가장 왼쪽(인덱스 0)에 위치
+//   - 여러 값 추가 시 순서 보장
+//
+// **예시:**
+//
+//	초기: []
+//	LPUSH key "a" "b" "c" → ["a", "b", "c"] (길이: 3)
+//	LPUSH key "d" → ["d", "a", "b", "c"] (길이: 4)
+//
+// **시간 복잡도:** O(N+M) (N=기존 크기, M=추가할 요소 수)
+// **공간 복잡도:** O(N+M) (새 슬라이스 할당)
+func (s *Store) LPUSH(key string, values ...string) int {
+	// 기존 리스트 조회 (없으면 빈 슬라이스)
+	existingList, exists := s.listStorage[key]
+	if !exists {
+		existingList = []string{}
+	}
+
+	// **핵심 구현 포인트 (Redis 동작 정확히 재현!):**
+	// Redis LPUSH key "a" "b" "c"의 실제 동작:
+	//   1. "a" 추가 → [...기존요소들, "a"]
+	//   2. "b" 추가 (앞쪽에) → ["b", ...기존요소들, "a"]
+	//   3. "c" 추가 (앞쪽에) → ["c", "b", ...기존요소들, "a"]
+	//
+	// 따라서 values를 **역순**으로 하나씩 앞에 추가해야 함
+
+	// 새로운 슬라이스 생성 (capacity 최적화)
+	newLength := len(values) + len(existingList)
+	newList := make([]string, 0, newLength)
+
+	// values를 **역순**으로 추가 (Redis 동작 재현)
+	for i := len(values) - 1; i >= 0; i-- {
+		newList = append(newList, values[i])
+	}
+
+	// 기존 요소들을 뒤에 추가
+	newList = append(newList, existingList...)
+
+	// 저장소 업데이트
+	s.listStorage[key] = newList
+
+	return newLength
+}

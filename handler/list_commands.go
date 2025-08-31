@@ -9,34 +9,6 @@ import (
 )
 
 // RPushHandler는 RPUSH 명령어를 처리하는 핸들러입니다.
-//
-// RPUSH 명령어의 역할:
-//   - 리스트의 오른쪽 끝(tail)에 하나 이상의 값을 추가
-//   - 키가 존재하지 않으면 새 리스트 생성 후 추가
-//   - 원자적 연산: 모든 값이 한 번에 추가됨
-//
-// Redis RPUSH 명령어 사양:
-//   - RPUSH key value [value ...] → (integer) 새로운 리스트 길이
-//   - 키가 없으면 빈 리스트 생성 후 추가
-//   - 리스트가 아닌 타입의 키에 사용하면 에러 (현재 미구현)
-//
-// 예시:
-//
-//	RPUSH mylist "hello" → :1\r\n
-//	RPUSH mylist "world" "foo" → :3\r\n
-//	RPUSH newlist "first" → :1\r\n (새 리스트 생성)
-//
-// 시간 복잡도:
-//   - O(1) - 각 추가되는 요소당
-//   - O(N) - N개 요소 추가 시
-//
-// 공간 복잡도: O(N) - 추가되는 요소 수에 비례
-//
-// Redis List의 특징:
-//   - 중복 값 허용
-//   - 순서 보장 (삽입 순서)
-//   - 인덱스 접근 가능 (0부터 시작)
-//   - 양쪽 끝에서 빠른 삽입/삭제
 type RPushHandler struct{}
 
 // Execute는 RPUSH 명령어를 실행합니다.
@@ -203,11 +175,53 @@ func (h *LRangeHandler) Execute(args []string, store *store.Store) (interface{},
 	return elements, nil
 }
 
-// TODO: 향후 구현할 List 명령어들
+// LPushHandler는 LPUSH 명령어를 처리하는 핸들러입니다.
+type LPushHandler struct{}
+
+// Execute는 LPUSH 명령어를 실행합니다.
 //
-// LPushHandler - LPUSH key value [value ...]
-//   - 리스트의 왼쪽 끝(head)에 값 추가
-//   - RPUSH의 반대 방향
+// **LPUSH 동작 로직:**
+//  1. 인자 개수 검증 (최소 2개: key, value1, [value2, ...])
+//  2. 키와 추가할 값들 분리
+//  3. 저장소의 LPUSH 메서드 호출
+//  4. 새로운 리스트 길이 반환
+//
+// **인자 처리 방식:**
+//   - args[0]: 리스트 키 이름
+//   - args[1:]: 추가할 값들 (순서 중요!)
+//   - variadic parameter로 Store.LPUSH에 전달
+//
+// **매개변수:**
+//   - args: 명령어 인자들
+//   - args[0]: 리스트 키 이름
+//   - args[1:]: 추가할 값들 (1개 이상, 순서 보장)
+//   - store: 데이터 저장소 인스턴스
+//
+// **반환값:**
+//   - interface{}: 새로운 리스트의 길이 (int)
+//   - error: 인자가 부족한 경우 WrongNumberOfArgumentsError
+func (h *LPushHandler) Execute(args []string, store *store.Store) (interface{}, error) {
+	// 최소 인자 개수 검증 (key + 최소 1개 값)
+	// Redis와 동일한 에러 메시지 형식 준수
+	if len(args) < 2 {
+		return nil, &WrongNumberOfArgumentsError{Command: "lpush"}
+	}
+
+	// 키와 값들 분리
+	key := args[0]
+	values := args[1:] // 슬라이스 참조 (메모리 복사 없음)
+
+	// 저장소의 LPUSH 메서드 호출
+	// variadic parameter 패턴으로 모든 값을 한 번에 전달
+	// 원자적 연산 보장 (중간 실패 없음)
+	newLength := store.LPUSH(key, values...)
+
+	// 새로운 리스트 길이를 Integer로 반환
+	// Redis LPUSH는 항상 정수를 반환함 (RESP Integer 타입)
+	return newLength, nil
+}
+
+// TODO: 향후 구현할 List 명령어들
 //
 // LPopHandler - LPOP key
 //   - 리스트의 왼쪽 끝에서 요소 제거하고 반환
@@ -226,6 +240,6 @@ func (h *LRangeHandler) Execute(args []string, store *store.Store) (interface{},
 //
 // 구현 시 고려사항:
 //   1. 키가 존재하지 않는 경우 처리
-//   2. 키가 List 타입이 아닌 경우 에러 처리  
+//   2. 키가 List 타입이 아닌 경우 에러 처리
 //   3. 인덱스 범위 검증
 //   4. 원자적 연산 보장
