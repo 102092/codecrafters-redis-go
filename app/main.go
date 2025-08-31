@@ -3,12 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/protocol"
 	"github.com/codecrafters-io/redis-starter-go/store"
 )
 
@@ -39,31 +39,14 @@ func main() {
 	}
 }
 
-func parseRESP(reader *bufio.Reader) (interface{}, error) {
-	// 첫 바이트로 타입 판별
-	typeByte, err := reader.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-
-	switch typeByte {
-	case '+': // Simple String
-		return readSimpleString(reader)
-	case '*': // Array
-		return readArray(reader)
-	case '$': // Bulk String
-		return readBulkString(reader)
-	default:
-		return nil, fmt.Errorf("unknown RESP type: %c", typeByte)
-	}
-}
-
 func handleConnection(conn net.Conn, dataStore *store.Store) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
+	parser := protocol.NewParser(reader)
+	writer := protocol.NewWriter(conn)
 
 	for {
-		value, err := parseRESP(reader)
+		value, err := parser.Parse()
 		if err != nil {
 			fmt.Println("Error parsing response: ", err.Error())
 			return
@@ -73,14 +56,13 @@ func handleConnection(conn net.Conn, dataStore *store.Store) {
 			if cmd, ok := arr[0].(string); ok {
 				switch strings.ToUpper(cmd) {
 				case "PING":
-					conn.Write([]byte("+PONG\r\n"))
+					writer.WritePONG()
 
 				case "ECHO":
 					if len(arr) > 1 {
 						if msg, ok := arr[1].(string); ok {
-							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)))
+							writer.WriteBulkString(&msg)
 						}
-
 					}
 				case "SET":
 					if len(arr) >= 5 {
@@ -92,7 +74,7 @@ func handleConnection(conn net.Conn, dataStore *store.Store) {
 						if strings.ToUpper(unit) == "PX" {
 							px, _ := strconv.Atoi(expiry)
 							dataStore.SET(key, value, &px)
-							conn.Write([]byte("+OK\r\n"))
+							writer.WriteOK()
 							continue
 						}
 					} else if len(arr) >= 2 {
@@ -100,18 +82,14 @@ func handleConnection(conn net.Conn, dataStore *store.Store) {
 						value := arr[2].(string)
 
 						dataStore.SET(key, value, nil)
-						conn.Write([]byte("+OK\r\n"))
+						writer.WriteOK()
 					}
 				case "GET":
 					if len(arr) >= 2 {
 						key := arr[1].(string)
 						value := dataStore.GET(key)
 
-						if value != nil {
-							conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(*value), *value)))
-						} else {
-							conn.Write([]byte("$-1\r\n")) // null bulk string
-						}
+						writer.WriteBulkString(value)
 					}
 				case "RPUSH":
 					if len(arr) >= 3 {
@@ -125,93 +103,10 @@ func handleConnection(conn net.Conn, dataStore *store.Store) {
 						}
 
 						length := dataStore.RPUSH(key, values...)
-						conn.Write([]byte(fmt.Sprintf(":%d\r\n", length)))
+						writer.WriteInteger(length)
 					}
 				}
 			}
 		}
 	}
-}
-
-// Simple String 읽기: +OK\r\n
-func readSimpleString(reader *bufio.Reader) (string, error) {
-	line, err := readLine(reader)
-	if err != nil {
-		return "", err
-	}
-	return line,
-		nil
-}
-
-// Array 읽기: *2\r\n$4\r\nPING\r\n$4\r\ntest\r\n
-func readArray(reader *bufio.Reader) ([]interface{}, error) {
-	line, err := readLine(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	count, err := strconv.ParseInt(line, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	// Null array
-	if count == -1 {
-		return nil, nil
-	}
-
-	// 각 요소를 재귀적으로 파싱
-	result := make([]interface{}, count)
-	for i := int64(0); i < count; i++ {
-		value, err := parseRESP(reader)
-		if err != nil {
-			return nil, err
-		}
-		result[i] = value
-	}
-
-	return result, nil
-}
-
-// Bulk String 읽기: $6\r\nfoobar\r\n 또는 $-1\r\n (nil)
-func readBulkString(reader *bufio.Reader) (interface{}, error) {
-	line, err := readLine(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	length, err := strconv.ParseInt(line, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	// Null bulk string
-	if length == -1 {
-		return nil, nil
-	}
-
-	// 지정된 길이만큼 읽기
-	buf := make([]byte, length+2) // +2 for \r\n
-	_, err = io.ReadFull(reader, buf)
-	if err != nil {
-		return nil, err
-	}
-
-	// \r\n 제거
-	return string(buf[:length]), nil
-}
-
-// \r\n까지 한 줄 읽기
-func readLine(reader *bufio.Reader) (string, error) {
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-
-	// \r\n 제거
-	if len(line) >= 2 && line[len(line)-2] == '\r' {
-		return line[:len(line)-2], nil
-	}
-
-	return line[:len(line)-1], nil
 }
