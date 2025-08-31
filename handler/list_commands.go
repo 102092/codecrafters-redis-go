@@ -109,11 +109,30 @@ func (h *LLenHandler) Execute(args []string, store *store.Store) (interface{}, e
 	return length, nil
 }
 
+// LPopHandler는 LPOP 명령어를 처리하는 핸들러입니다.
+type LPopHandler struct{}
+
+// Execute는 LPOP 명령어를 실행합니다.
+func (h *LPopHandler) Execute(args []string, store *store.Store) (interface{}, error) {
+	// 정확한 인자 개수 검증 (key 하나만 필요)
+	if len(args) != 1 {
+		return nil, &WrongNumberOfArgumentsError{Command: "lpop"}
+	}
+
+	key := args[0]
+
+	// 저장소에서 왼쪽 끝 요소 제거 및 반환
+	result := store.LPOP(key)
+
+	// nil이면 nil 반환 (Null Bulk String), 값이 있으면 문자열 반환
+	if result == nil {
+		return nil, nil
+	}
+
+	return *result, nil
+}
+
 // TODO: 향후 구현할 List 명령어들
-//
-// LPopHandler - LPOP key
-//   - 리스트의 왼쪽 끝에서 요소 제거하고 반환
-//   - 스택 또는 큐 구현에 사용
 //
 // RPopHandler - RPOP key
 //   - 리스트의 오른쪽 끝에서 요소 제거하고 반환
