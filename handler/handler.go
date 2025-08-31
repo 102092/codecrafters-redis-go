@@ -79,11 +79,12 @@ func NewCommandRegistry(store *store.Store) *CommandRegistry {
 
 	// 기본 명령어 핸들러들 등록
 	// 각 핸들러는 해당 명령어의 비즈니스 로직을 캡슐화합니다.
-	registry.Register("PING", &PingHandler{})   // 연결 테스트
-	registry.Register("ECHO", &EchoHandler{})   // 메시지 에코
-	registry.Register("SET", &SetHandler{})     // 키-값 저장
-	registry.Register("GET", &GetHandler{})     // 키로 값 조회
-	registry.Register("RPUSH", &RPushHandler{}) // 리스트 끝에 추가
+	registry.Register("PING", &PingHandler{})     // 연결 테스트
+	registry.Register("ECHO", &EchoHandler{})     // 메시지 에코
+	registry.Register("SET", &SetHandler{})       // 키-값 저장
+	registry.Register("GET", &GetHandler{})       // 키로 값 조회
+	registry.Register("RPUSH", &RPushHandler{})   // 리스트 끝에 추가
+	registry.Register("LRANGE", &LRangeHandler{}) // 리스트 범위 조회
 
 	return registry
 }

@@ -69,6 +69,22 @@ func (s *Store) GET(key string) *string {
 	return nil
 }
 
+// RPUSH는 Redis RPUSH 명령어를 구현합니다.
+// 리스트의 오른쪽 끝(뒤쪽)에 하나 이상의 값을 추가합니다.
+//
+// 동작 방식:
+//   - 키가 없으면 새로운 리스트 생성 후 값 추가
+//   - 키가 있으면 기존 리스트 끝에 값 추가
+//   - 여러 값을 한 번에 추가 가능
+//
+// 매개변수:
+//   - key: 리스트 키
+//   - values: 추가할 값들 (가변 인자)
+//
+// 반환값:
+//   - int: 추가 후 리스트의 총 길이
+//
+// 시간 복잡도: O(N) (N은 추가할 값의 개수)
 func (s *Store) RPUSH(key string, values ...string) int {
 	list, exists := s.listStorage[key]
 	if !exists {
@@ -79,4 +95,70 @@ func (s *Store) RPUSH(key string, values ...string) int {
 	s.listStorage[key] = list
 
 	return len(list)
+}
+
+// LRANGE는 Redis LRANGE 명령어를 구현합니다.
+// 리스트의 지정된 범위의 요소들을 조회합니다.
+//
+// 인덱스 규칙:
+//   - 0부터 시작 (첫 번째 요소가 인덱스 0)
+//   - 음수 인덱스 지원 (-1은 마지막 요소, -2는 뒤에서 두 번째)
+//   - 범위를 벗어난 인덱스는 자동으로 조정됨
+//
+// 매개변수:
+//   - key: 조회할 리스트의 키
+//   - start: 시작 인덱스 (포함)
+//   - stop: 끝 인덱스 (포함)
+//
+// 반환값:
+//   - []string: 지정된 범위의 요소들 (빈 슬라이스 가능)
+//
+// 예시:
+//   - LRANGE mylist 0 2   → 인덱스 0, 1, 2 요소들
+//   - LRANGE mylist 1 -1  → 인덱스 1부터 마지막까지
+//   - LRANGE mylist -3 -1 → 뒤에서 3번째부터 마지막까지
+//
+// 시간 복잡도: O(S+N) (S는 시작 위치까지의 오프셋, N은 반환할 요소 수)
+func (s *Store) LRANGE(key string, start, stop int) []string {
+	// 키가 존재하지 않으면 빈 슬라이스 반환
+	list, exists := s.listStorage[key]
+	if !exists {
+		return []string{}
+	}
+
+	// 리스트가 비어있으면 빈 슬라이스 반환
+	length := len(list)
+	if length == 0 {
+		return []string{}
+	}
+
+	// 음수 인덱스를 양수로 변환
+	// -1은 length-1 (마지막 요소), -2는 length-2 등
+	if start < 0 {
+		start = length + start
+	}
+	if stop < 0 {
+		stop = length + stop
+	}
+
+	// 인덱스가 범위를 벗어났을 때 조정
+	if start < 0 {
+		start = 0 // 리스트 시작으로 조정
+	}
+
+	if start >= length {
+		return []string{} // 시작점이 리스트 끝을 넘어서면 빈 결과
+	}
+
+	if stop >= length {
+		stop = length - 1 // 리스트 끝으로 조정
+	}
+
+	if stop < start {
+		return []string{} // stop이 start보다 앞에 있으면 빈 결과
+	}
+
+	// 범위에 해당하는 부분 슬라이스 반환
+	// Go 슬라이스는 [start:stop+1] 형태로 사용 (stop+1은 제외)
+	return list[start : stop+1]
 }

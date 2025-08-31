@@ -252,6 +252,142 @@ func TestRPushHandler(t *testing.T) {
 	}
 }
 
+// TestLRangeHandler는 LRANGE 명령어 핸들러를 테스트합니다.
+//
+// 테스트하는 케이스:
+//  1. 기본 범위 조회 (0 2)
+//  2. 음수 인덱스 사용 (-3 -1)
+//  3. 전체 리스트 조회 (0 -1)
+//  4. 범위 초과 인덱스
+//  5. 존재하지 않는 키
+//  6. 잘못된 인자 개수
+//  7. 잘못된 인덱스 형식
+//
+// LRANGE 명령어의 특징:
+//   - 배열 형태로 결과 반환
+//   - 인덱스는 0부터 시작, 음수 지원
+//   - 범위 초과 시 자동 조정
+//   - 존재하지 않는 키는 빈 배열
+func TestLRangeHandler(t *testing.T) {
+	handler := &LRangeHandler{}
+	dataStore := store.NewStore()
+
+	// 테스트 데이터 준비: ["first", "second", "third", "fourth", "fifth"]
+	dataStore.RPUSH("testlist", "first", "second", "third", "fourth", "fifth")
+
+	// 테스트 케이스 1: 기본 범위 조회 (0 2) → [first, second, third]
+	result, err := handler.Execute([]string{"testlist", "0", "2"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE 0 2 failed: %v", err)
+	}
+
+	expected := []string{"first", "second", "third"}
+	if !equalStringSlices(result.([]string), expected) {
+		t.Errorf("Expected %v, got %v", expected, result)
+	}
+
+	// 테스트 케이스 2: 음수 인덱스 (-3 -1) → [third, fourth, fifth]
+	result, err = handler.Execute([]string{"testlist", "-3", "-1"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE -3 -1 failed: %v", err)
+	}
+
+	expected = []string{"third", "fourth", "fifth"}
+	if !equalStringSlices(result.([]string), expected) {
+		t.Errorf("Expected %v, got %v", expected, result)
+	}
+
+	// 테스트 케이스 3: 전체 리스트 조회 (0 -1)
+	result, err = handler.Execute([]string{"testlist", "0", "-1"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE 0 -1 failed: %v", err)
+	}
+
+	expected = []string{"first", "second", "third", "fourth", "fifth"}
+	if !equalStringSlices(result.([]string), expected) {
+		t.Errorf("Expected %v, got %v", expected, result)
+	}
+
+	// 테스트 케이스 4: 범위 초과 인덱스 (10 20) → []
+	result, err = handler.Execute([]string{"testlist", "10", "20"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE 10 20 failed: %v", err)
+	}
+
+	if len(result.([]string)) != 0 {
+		t.Errorf("Expected empty slice, got %v", result)
+	}
+
+	// 테스트 케이스 5: 존재하지 않는 키 → []
+	result, err = handler.Execute([]string{"nonexistent", "0", "10"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE on non-existent key failed: %v", err)
+	}
+
+	if len(result.([]string)) != 0 {
+		t.Errorf("Expected empty slice for non-existent key, got %v", result)
+	}
+
+	// 테스트 케이스 6: 인자 부족 (에러 케이스)
+	result, err = handler.Execute([]string{"testlist", "0"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for insufficient args")
+	}
+
+	// 테스트 케이스 7: 인자 과다 (에러 케이스)
+	result, err = handler.Execute([]string{"testlist", "0", "1", "2"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for too many args")
+	}
+
+	// 테스트 케이스 8: 잘못된 start 인덱스 (에러 케이스)
+	result, err = handler.Execute([]string{"testlist", "notanumber", "1"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for invalid start index")
+	}
+
+	// 테스트 케이스 9: 잘못된 stop 인덱스 (에러 케이스)
+	result, err = handler.Execute([]string{"testlist", "0", "notanumber"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for invalid stop index")
+	}
+
+	// 테스트 케이스 10: 역순 인덱스 (stop < start) → []
+	result, err = handler.Execute([]string{"testlist", "3", "1"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE 3 1 failed: %v", err)
+	}
+
+	if len(result.([]string)) != 0 {
+		t.Errorf("Expected empty slice for reversed range, got %v", result)
+	}
+
+	// 테스트 케이스 11: 단일 요소 조회 (2 2) → [third]
+	result, err = handler.Execute([]string{"testlist", "2", "2"}, dataStore)
+	if err != nil {
+		t.Fatalf("LRANGE 2 2 failed: %v", err)
+	}
+
+	expected = []string{"third"}
+	if !equalStringSlices(result.([]string), expected) {
+		t.Errorf("Expected %v, got %v", expected, result)
+	}
+}
+
+// equalStringSlices는 두 문자열 슬라이스가 같은지 비교하는 헬퍼 함수입니다.
+// Go 1.21 이전 버전에서는 slices.Equal을 사용할 수 없으므로 직접 구현합니다.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestCommandRegistry는 명령어 레지스트리 시스템을 테스트합니다.
 //
 // 테스트하는 케이스:
@@ -269,8 +405,8 @@ func TestCommandRegistry(t *testing.T) {
 	dataStore := store.NewStore()
 	registry := NewCommandRegistry(dataStore)
 
-	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인
-	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH"}
+	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인 (LRANGE 추가)
+	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LRANGE"}
 	for _, cmd := range expectedCommands {
 		if !registry.HasCommand(cmd) {
 			t.Errorf("Command %s not registered", cmd)
