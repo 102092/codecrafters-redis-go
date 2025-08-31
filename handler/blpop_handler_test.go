@@ -49,8 +49,8 @@ func TestBLPopHandler(t *testing.T) {
 		t.Fatalf("BLPOP on non-existent key should not fail: %v", err)
 	}
 	
-	if result != nil {
-		t.Errorf("Expected nil for non-existent key, got %v", result)
+	if _, ok := result.(*NullArray); !ok {
+		t.Errorf("Expected NullArray for non-existent key, got %v", result)
 	}
 
 	// 테스트 케이스 3: 빈 리스트에서 BLPOP
@@ -62,8 +62,8 @@ func TestBLPopHandler(t *testing.T) {
 		t.Fatalf("BLPOP on empty list should not fail: %v", err)
 	}
 	
-	if result != nil {
-		t.Errorf("Expected nil for empty list, got %v", result)
+	if _, ok := result.(*NullArray); !ok {
+		t.Errorf("Expected NullArray for empty list, got %v", result)
 	}
 
 	// === 다중 키 BLPOP 테스트 ===
@@ -108,8 +108,8 @@ func TestBLPopHandler(t *testing.T) {
 		t.Fatalf("BLPOP with all empty keys should not fail: %v", err)
 	}
 	
-	if result != nil {
-		t.Errorf("Expected nil when all keys are empty, got %v", result)
+	if _, ok := result.(*NullArray); !ok {
+		t.Errorf("Expected NullArray when all keys are empty, got %v", result)
 	}
 
 	// 테스트 케이스 7: 키 순서 우선순위 테스트
@@ -158,8 +158,8 @@ func TestBLPopHandler(t *testing.T) {
 		t.Fatalf("BLPOP with timeout=0 should not fail: %v", err)
 	}
 	
-	if result != nil {
-		t.Errorf("Expected nil for timeout on empty key, got %v", result)
+	if _, ok := result.(*NullArray); !ok {
+		t.Errorf("Expected NullArray for timeout on empty key, got %v", result)
 	}
 
 	// === 에러 케이스 테스트 ===

@@ -8,6 +8,12 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/store"
 )
 
+// NullArray는 RESP null array (*-1\r\n)를 나타내는 특별한 타입입니다.
+type NullArray struct{}
+
+// Redis BLPOP timeout시 null array 반환을 위한 싱글톤 인스턴스
+var nullArray = &NullArray{}
+
 // RPushHandler는 RPUSH 명령어를 처리하는 핸들러입니다.
 type RPushHandler struct{}
 
@@ -169,8 +175,8 @@ func (h *BLPopHandler) Execute(args []string, store *store.Store) (interface{}, 
 	timeoutStr := args[len(args)-1]
 	keys := args[:len(args)-1]
 
-	// timeout 파싱
-	timeout, err := strconv.Atoi(timeoutStr)
+	// timeout 파싱 (float으로)
+	timeoutFloat, err := strconv.ParseFloat(timeoutStr, 64)
 	if err != nil {
 		return nil, &InvalidArgumentError{
 			Message: "timeout is not a float or out of range",
@@ -178,22 +184,22 @@ func (h *BLPopHandler) Execute(args []string, store *store.Store) (interface{}, 
 	}
 
 	// timeout이 음수이면 에러
-	if timeout < 0 {
+	if timeoutFloat < 0 {
 		return nil, &InvalidArgumentError{
 			Message: "timeout is negative",
 		}
 	}
 
 	// Store의 blocking BLPOP 메소드 호출
-	result := store.BLPOPBlocking(keys, timeout)
+	result := store.BLPOPBlocking(keys, timeoutFloat)
 
 	// 결과가 있으면 [key, value] 배열로 반환
 	if result != nil {
 		return []string{result.Key, result.Value}, nil
 	}
 
-	// 타임아웃이 발생하여 nil이 반환됨
-	return nil, nil
+	// 타임아웃이 발생하여 null array 반환
+	return nullArray, nil
 }
 
 // TODO: 향후 구현할 List 명령어들

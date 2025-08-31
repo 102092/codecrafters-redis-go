@@ -501,7 +501,7 @@ func (s *Store) notifyWaiters(key string) {
 }
 
 // BLPOPBlocking은 실제 blocking 기능을 가진 BLPOP을 구현합니다.
-func (s *Store) BLPOPBlocking(keys []string, timeoutSeconds int) *BLPopResult {
+func (s *Store) BLPOPBlocking(keys []string, timeoutSeconds float64) *BLPopResult {
 	// 먼저 non-blocking으로 시도
 	result := s.BLPOP(keys)
 	if result != nil {
@@ -512,7 +512,7 @@ func (s *Store) BLPOPBlocking(keys []string, timeoutSeconds int) *BLPopResult {
 	var timeout time.Duration
 	var useTimeout bool
 	if timeoutSeconds > 0 {
-		timeout = time.Duration(timeoutSeconds) * time.Second
+		timeout = time.Duration(timeoutSeconds * float64(time.Second))
 		useTimeout = true
 	}
 	

@@ -59,8 +59,8 @@ func TestBLPopBlocking(t *testing.T) {
 			t.Fatalf("BLPOP should not fail on timeout: %v", err)
 		}
 
-		if result != nil {
-			t.Errorf("Expected nil result on timeout, got %v", result)
+		if _, ok := result.(*NullArray); !ok {
+			t.Errorf("Expected NullArray result on timeout, got %v", result)
 		}
 
 		// 대략 1초 정도 걸려야 함 (오차 허용)
@@ -100,17 +100,12 @@ func TestBLPopBlocking(t *testing.T) {
 				t.Fatalf("BLPOP %d should not fail: %v", i, errors[i])
 			}
 
-			if results[i] != nil {
+			if resultArray, ok := results[i].([]string); ok && len(resultArray) == 2 && resultArray[0] == "multi_wait" && resultArray[1] == "shared_value" {
 				successCount++
-				resultArray, ok := results[i].([]string)
-				if !ok {
-					t.Fatalf("Expected []string result, got %T", results[i])
-				}
-				if len(resultArray) != 2 || resultArray[0] != "multi_wait" || resultArray[1] != "shared_value" {
-					t.Errorf("Expected [multi_wait, shared_value], got %v", resultArray)
-				}
-			} else {
+			} else if _, ok := results[i].(*NullArray); ok {
 				timeoutCount++
+			} else {
+				t.Errorf("Expected [multi_wait, shared_value] or NullArray, got %v", results[i])
 			}
 		}
 
@@ -344,6 +339,60 @@ func TestBLPopInfiniteWait(t *testing.T) {
 
 		if len(resultArray) != 2 || resultArray[0] != "infinite_wait" || resultArray[1] != "infinite_value" {
 			t.Errorf("Expected [infinite_wait, infinite_value], got %v", resultArray)
+		}
+	})
+
+	// 테스트 케이스: 소수점 timeout 테스트 (테스터 요구사항)
+	t.Run("FloatTimeoutTest", func(t *testing.T) {
+		start := time.Now()
+		result, err := handler.Execute([]string{"float_timeout_key", "0.1"}, dataStore)
+		duration := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("BLPOP with float timeout should not fail: %v", err)
+		}
+
+		if _, ok := result.(*NullArray); !ok {
+			t.Errorf("Expected NullArray result on timeout, got %v", result)
+		}
+
+		// 대략 0.1초 정도 걸려야 함 (오차 허용)
+		if duration < 90*time.Millisecond || duration > 150*time.Millisecond {
+			t.Errorf("Expected ~0.1s timeout, got %v", duration)
+		}
+	})
+
+	// 테스트 케이스: 소수점 timeout 중 값 추가
+	t.Run("FloatTimeoutWithValueAdded", func(t *testing.T) {
+		var wg sync.WaitGroup
+		var result interface{}
+		var err error
+
+		// 고루틴에서 BLPOP 실행 (0.5초 타임아웃)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err = handler.Execute([]string{"float_value_key", "0.5"}, dataStore)
+		}()
+
+		// 잠시 대기 후 값 추가 (타임아웃 전에)
+		time.Sleep(100 * time.Millisecond)
+		dataStore.RPUSH("float_value_key", "float_value")
+
+		// 결과 대기
+		wg.Wait()
+
+		if err != nil {
+			t.Fatalf("BLPOP should not fail: %v", err)
+		}
+
+		resultArray, ok := result.([]string)
+		if !ok {
+			t.Fatalf("Expected []string result, got %T", result)
+		}
+
+		if len(resultArray) != 2 || resultArray[0] != "float_value_key" || resultArray[1] != "float_value" {
+			t.Errorf("Expected [float_value_key, float_value], got %v", resultArray)
 		}
 	})
 }

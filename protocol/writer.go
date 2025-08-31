@@ -123,6 +123,15 @@ func (w *Writer) WriteArray(arr []string) error {
 	return nil
 }
 
+func (w *Writer) WriteNullArray() error {
+	_, err := w.writer.Write([]byte(fmt.Sprintf("*-1\r\n")))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // WriteOK는 표준 OK 응답을 작성하는 헬퍼 함수입니다.
 // 출력: +OK\r\n
 //

@@ -153,6 +153,10 @@ func writeResponse(writer *protocol.Writer, result interface{}) {
 		// 문자열 배열: LRANGE 등의 반환값
 		writer.WriteArray(v)
 
+	case *handler.NullArray:
+		// BLPOP timeout시 null array (*-1\r\n) 응답
+		writer.WriteNullArray()
+
 	default:
 		// 예상하지 못한 타입: 개발 중 디버깅용
 		fmt.Printf("Warning: unexpected result type %T: %v\n", result, result)
