@@ -113,6 +113,20 @@ func handleConnection(conn net.Conn, dataStore *store.Store) {
 							conn.Write([]byte("$-1\r\n")) // null bulk string
 						}
 					}
+				case "RPUSH":
+					if len(arr) >= 3 {
+						key := arr[1].(string)
+						values := make([]string, 0, len(arr)-2)
+
+						for i := 2; i < len(arr); i++ {
+							if val, ok := arr[i].(string); ok {
+								values = append(values, val)
+							}
+						}
+
+						length := dataStore.RPUSH(key, values...)
+						conn.Write([]byte(fmt.Sprintf(":%d\r\n", length)))
+					}
 				}
 			}
 		}

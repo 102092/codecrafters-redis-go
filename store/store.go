@@ -14,6 +14,7 @@ type ValueWithTTL struct {
 type Store struct {
 	storage       map[string]string       // Regular key-value storage
 	expireStorage map[string]ValueWithTTL // Storage with TTL
+	listStorage   map[string][]string     // List storeage
 }
 
 // NewStore creates a new Store instance
@@ -21,6 +22,7 @@ func NewStore() *Store {
 	return &Store{
 		storage:       make(map[string]string),
 		expireStorage: make(map[string]ValueWithTTL),
+		listStorage:   make(map[string][]string),
 	}
 }
 
@@ -65,4 +67,16 @@ func (s *Store) GET(key string) *string {
 
 	// Key not found
 	return nil
+}
+
+func (s *Store) RPUSH(key string, values ...string) int {
+	list, exists := s.listStorage[key]
+	if !exists {
+		list = []string{}
+	}
+
+	list = append(list, values...)
+	s.listStorage[key] = list
+
+	return len(list)
 }
