@@ -11,9 +11,6 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/store"
 )
 
-// 이전의 gofmt 회피 코드는 더 이상 필요하지 않음
-// 모든 import가 실제로 사용되고 있음
-
 func main() {
 	// Redis 서버 시작 로그
 	fmt.Println("Starting Redis server on port 6379...")

@@ -88,6 +88,7 @@ func NewCommandRegistry(store *store.Store) *CommandRegistry {
 	registry.Register("LRANGE", &LRangeHandler{}) // 리스트 범위 조회
 	registry.Register("LLEN", &LLenHandler{})     // 리스트 길이 조회
 	registry.Register("LPOP", &LPopHandler{})     // 리스트 앞에서 제거
+	registry.Register("BLPOP", &BLPopHandler{})   // Blocking 리스트 앞에서 제거
 
 	return registry
 }

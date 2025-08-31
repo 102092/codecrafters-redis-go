@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"time"
 )
 
@@ -10,20 +11,40 @@ type ValueWithTTL struct {
 	ExpireAt time.Time
 }
 
+// BlockingWaiter represents a client waiting for a blocking operation
+type BlockingWaiter struct {
+	Keys     []string           // Keys this waiter is monitoring
+	Response chan *BLPopResult  // Channel to send result
+	Timeout  time.Duration      // How long to wait
+	StartTime time.Time         // When the wait started
+}
+
 // Store manages key-value storage with optional TTL support
 type Store struct {
 	storage       map[string]string       // Regular key-value storage
 	expireStorage map[string]ValueWithTTL // Storage with TTL
-	listStorage   map[string][]string     // List storeage
+	listStorage   map[string][]string     // List storage
+	
+	// Blocking operation support
+	mu            sync.RWMutex                    // Protects all blocking operations
+	waiters       map[string][]*BlockingWaiter   // Key -> list of waiters
+	waiterCleanup chan *BlockingWaiter           // Channel for cleanup
 }
 
 // NewStore creates a new Store instance
 func NewStore() *Store {
-	return &Store{
+	store := &Store{
 		storage:       make(map[string]string),
 		expireStorage: make(map[string]ValueWithTTL),
 		listStorage:   make(map[string][]string),
+		waiters:       make(map[string][]*BlockingWaiter),
+		waiterCleanup: make(chan *BlockingWaiter, 100),
 	}
+	
+	// Start cleanup goroutine for expired waiters
+	go store.cleanupWaiters()
+	
+	return store
 }
 
 // SET implements Redis SET command
@@ -93,6 +114,9 @@ func (s *Store) RPUSH(key string, values ...string) int {
 
 	list = append(list, values...)
 	s.listStorage[key] = list
+
+	// 새 값이 추가되었으므로 대기 중인 클라이언트들에게 알림
+	s.notifyWaiters(key)
 
 	return len(list)
 }
@@ -215,6 +239,9 @@ func (s *Store) LPUSH(key string, values ...string) int {
 	// 저장소 업데이트
 	s.listStorage[key] = newList
 
+	// 새 값이 추가되었으므로 대기 중인 클라이언트들에게 알림
+	s.notifyWaiters(key)
+
 	return newLength
 }
 
@@ -336,4 +363,200 @@ func (s *Store) LPOP(key string, count *int) interface{} {
 	s.listStorage[key] = remainingElements
 
 	return removedElements
+}
+
+// BLPopResult는 BLPOP 명령어의 반환 결과를 나타냅니다.
+type BLPopResult struct {
+	Key   string // 값이 제거된 키
+	Value string // 제거된 값
+}
+
+// BLPOP은 Redis BLPOP 명령어를 구현합니다.
+// 여러 키에서 왼쪽 끝 요소를 blocking 방식으로 제거하고 반환합니다.
+//
+// Redis BLPOP 동작 방식:
+//   - 키들을 순서대로 확인하여 비어있지 않은 첫 번째 리스트에서 요소 제거
+//   - 모든 키가 비어있거나 존재하지 않으면 nil 반환 (non-blocking 모드)
+//   - 반환값: BLPopResult{Key: "키이름", Value: "제거된값"} 또는 nil
+//
+// 매개변수:
+//   - keys: 확인할 키들의 목록
+//
+// 반환값:
+//   - *BLPopResult: 제거된 키와 값 (nil이면 모든 리스트가 비어있음)
+//
+// 예시:
+//   - BLPOP key1 key2 key3 → key1에서 값 제거: {Key: "key1", Value: "value"}
+//   - 모든 키가 비어있음 → nil
+//
+// 시간 복잡도: O(N) (N=확인할 키의 개수)
+// 공간 복잡도: O(1) (결과 구조체만 할당)
+//
+// 참고: 현재는 non-blocking 모드로 구현됨. 
+// 실제 blocking 기능은 handler 레이어에서 구현됩니다.
+func (s *Store) BLPOP(keys []string) *BLPopResult {
+	// 키들을 순서대로 확인
+	for _, key := range keys {
+		// 각 키에 대해 LPOP 시도 (count = nil로 단일 요소 제거)
+		result := s.LPOP(key, nil)
+		
+		// nil이 아니면 값이 있다는 의미
+		if result != nil {
+			// LPOP은 count가 nil일 때 *string을 반환
+			if valuePtr, ok := result.(*string); ok && valuePtr != nil {
+				return &BLPopResult{
+					Key:   key,
+					Value: *valuePtr,
+				}
+			}
+		}
+	}
+	
+	// 모든 키가 비어있거나 존재하지 않음
+	return nil
+}
+
+// cleanupWaiters는 만료된 대기자들을 정리하는 고루틴입니다.
+func (s *Store) cleanupWaiters() {
+	for waiter := range s.waiterCleanup {
+		s.mu.Lock()
+		// Remove waiter from all keys it was monitoring
+		for _, key := range waiter.Keys {
+			waiters := s.waiters[key]
+			for i, w := range waiters {
+				if w == waiter {
+					// Remove from slice
+					s.waiters[key] = append(waiters[:i], waiters[i+1:]...)
+					break
+				}
+			}
+			// Clean up empty waiter lists
+			if len(s.waiters[key]) == 0 {
+				delete(s.waiters, key)
+			}
+		}
+		s.mu.Unlock()
+		
+		// Close the response channel to signal timeout
+		close(waiter.Response)
+	}
+}
+
+// notifyWaiters는 키에 새 값이 추가되었을 때 대기자들에게 알림을 보냅니다.
+func (s *Store) notifyWaiters(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	waiters := s.waiters[key]
+	if len(waiters) == 0 {
+		return
+	}
+	
+	// FIFO: 가장 먼저 대기한 waiter가 값을 받음
+	waiter := waiters[0]
+	
+	// Remove this waiter from ALL keys it was waiting for
+	for _, waitKey := range waiter.Keys {
+		keyWaiters := s.waiters[waitKey]
+		for i, w := range keyWaiters {
+			if w == waiter {
+				s.waiters[waitKey] = append(keyWaiters[:i], keyWaiters[i+1:]...)
+				break
+			}
+		}
+		// Clean up empty waiter list
+		if len(s.waiters[waitKey]) == 0 {
+			delete(s.waiters, waitKey)
+		}
+	}
+	
+	// Try to get a value respecting the waiter's original key priority
+	result := s.BLPOP(waiter.Keys)
+	if result != nil {
+		// Send the result
+		select {
+		case waiter.Response <- result:
+			// Success
+		default:
+			// Channel might be closed, ignore
+		}
+		
+		// Remove this waiter from other keys it was monitoring
+		for _, otherKey := range waiter.Keys {
+			if otherKey == key {
+				continue
+			}
+			otherWaiters := s.waiters[otherKey]
+			for i, w := range otherWaiters {
+				if w == waiter {
+					s.waiters[otherKey] = append(otherWaiters[:i], otherWaiters[i+1:]...)
+					break
+				}
+			}
+			if len(s.waiters[otherKey]) == 0 {
+				delete(s.waiters, otherKey)
+			}
+		}
+	}
+}
+
+// BLPOPBlocking은 실제 blocking 기능을 가진 BLPOP을 구현합니다.
+func (s *Store) BLPOPBlocking(keys []string, timeoutSeconds int) *BLPopResult {
+	// 먼저 non-blocking으로 시도
+	result := s.BLPOP(keys)
+	if result != nil {
+		return result
+	}
+	
+	// timeout 설정 (0이면 무한 대기)
+	var timeout time.Duration
+	var useTimeout bool
+	if timeoutSeconds > 0 {
+		timeout = time.Duration(timeoutSeconds) * time.Second
+		useTimeout = true
+	}
+	
+	// 대기자 생성
+	waiter := &BlockingWaiter{
+		Keys:      keys,
+		Response:  make(chan *BLPopResult, 1),
+		Timeout:   timeout,
+		StartTime: time.Now(),
+	}
+	
+	// 모든 키에 대기자 등록
+	s.mu.Lock()
+	for _, key := range keys {
+		s.waiters[key] = append(s.waiters[key], waiter)
+	}
+	s.mu.Unlock()
+	
+	// 타임아웃 고루틴 시작 (timeout > 0인 경우만)
+	if useTimeout {
+		go func() {
+			time.Sleep(timeout)
+			select {
+			case s.waiterCleanup <- waiter:
+				// Cleanup initiated
+			default:
+				// Cleanup channel full, waiter might already be processed
+			}
+		}()
+	}
+	
+	// 결과를 기다림
+	if useTimeout {
+		// 타임아웃이 있는 경우
+		select {
+		case result = <-waiter.Response:
+			return result
+		case <-time.After(timeout + 100*time.Millisecond):
+			// 추가 타임아웃으로 안전장치
+			return nil
+		}
+	} else {
+		// 무한 대기 (timeout=0)
+		result = <-waiter.Response
+		return result
+	}
 }

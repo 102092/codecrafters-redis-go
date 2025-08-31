@@ -13,7 +13,7 @@ func TestCommandRegistry(t *testing.T) {
 	registry := NewCommandRegistry(dataStore)
 
 	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인
-	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LPUSH", "LRANGE", "LLEN", "LPOP"}
+	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LPUSH", "LRANGE", "LLEN", "LPOP", "BLPOP"}
 	for _, cmd := range expectedCommands {
 		if !registry.HasCommand(cmd) {
 			t.Errorf("Command %s not registered", cmd)

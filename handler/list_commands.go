@@ -154,6 +154,48 @@ func (h *LPopHandler) Execute(args []string, store *store.Store) (interface{}, e
 	return result, nil
 }
 
+// BLPopHandler는 BLPOP 명령어를 처리하는 핸들러입니다.
+type BLPopHandler struct{}
+
+// Execute는 BLPOP 명령어를 실행합니다.
+// Redis 구문: BLPOP key [key ...] timeout
+func (h *BLPopHandler) Execute(args []string, store *store.Store) (interface{}, error) {
+	// 인자 개수 검증 (최소 2개: key + timeout)
+	if len(args) < 2 {
+		return nil, &WrongNumberOfArgumentsError{Command: "blpop"}
+	}
+
+	// 마지막 인자는 timeout
+	timeoutStr := args[len(args)-1]
+	keys := args[:len(args)-1]
+
+	// timeout 파싱
+	timeout, err := strconv.Atoi(timeoutStr)
+	if err != nil {
+		return nil, &InvalidArgumentError{
+			Message: "timeout is not a float or out of range",
+		}
+	}
+
+	// timeout이 음수이면 에러
+	if timeout < 0 {
+		return nil, &InvalidArgumentError{
+			Message: "timeout is negative",
+		}
+	}
+
+	// Store의 blocking BLPOP 메소드 호출
+	result := store.BLPOPBlocking(keys, timeout)
+
+	// 결과가 있으면 [key, value] 배열로 반환
+	if result != nil {
+		return []string{result.Key, result.Value}, nil
+	}
+
+	// 타임아웃이 발생하여 nil이 반환됨
+	return nil, nil
+}
+
 // TODO: 향후 구현할 List 명령어들
 //
 // RPopHandler - RPOP key
