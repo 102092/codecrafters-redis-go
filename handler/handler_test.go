@@ -586,8 +586,8 @@ func TestCommandRegistry(t *testing.T) {
 	dataStore := store.NewStore()
 	registry := NewCommandRegistry(dataStore)
 
-	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인 (LPUSH 추가)
-	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LPUSH", "LRANGE"}
+	// 테스트 케이스 1: 기본 명령어들이 등록되었는지 확인 (LLEN 추가)
+	expectedCommands := []string{"PING", "ECHO", "SET", "GET", "RPUSH", "LPUSH", "LRANGE", "LLEN"}
 	for _, cmd := range expectedCommands {
 		if !registry.HasCommand(cmd) {
 			t.Errorf("Command %s not registered", cmd)
@@ -700,29 +700,188 @@ func TestErrorTypes(t *testing.T) {
 	}
 }
 
-// 벤치마크 테스트들
-
-// BenchmarkPingHandler는 PING 핸들러의 성능을 측정합니다.
-// PING은 가장 빠른 명령어 중 하나이므로 기준점으로 사용됩니다.
-func BenchmarkPingHandler(b *testing.B) {
-	handler := &PingHandler{}
-	store := store.NewStore()
-	args := []string{}
-
-	// 벤치마크 루프
-	for i := 0; i < b.N; i++ {
-		_, _ = handler.Execute(args, store)
-	}
-}
-
-// BenchmarkCommandRegistry는 레지스트리를 통한 명령어 실행 성능을 측정합니다.
-// 실제 사용 시나리오와 유사한 벤치마크입니다.
-func BenchmarkCommandRegistry(b *testing.B) {
+// TestLLenHandler는 LLEN 명령어 핸들러를 종합적으로 테스트합니다.
+//
+// **테스트하는 케이스:**
+//  1. 존재하지 않는 키에 대한 LLEN
+//  2. 빈 리스트에 대한 LLEN
+//  3. 일반 리스트에 대한 LLEN
+//  4. 다양한 크기의 리스트 테스트
+//  5. LPUSH/RPUSH 후 길이 변화 확인
+//  6. 에러 케이스 (인자 개수 오류)
+//
+// **LLEN 명령어의 특징 검증:**
+//   - 항상 0 이상의 정수 반환
+//   - 존재하지 않는 키는 0 반환 (에러 없음)
+//   - O(1) 성능 (리스트 크기와 무관)
+//   - 읽기 전용 (리스트 변경 없음)
+func TestLLenHandler(t *testing.T) {
+	handler := &LLenHandler{}
 	dataStore := store.NewStore()
-	registry := NewCommandRegistry(dataStore)
 
-	// 벤치마크 루프
-	for i := 0; i < b.N; i++ {
-		_, _ = registry.Execute("PING", []string{})
+	// 테스트 케이스 1: 존재하지 않는 키
+	// Redis의 핵심 특성: 존재하지 않는 키에 대해 에러가 아닌 0 반환
+	result, err := handler.Execute([]string{"nonexistent"}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN on non-existent key should not fail: %v", err)
+	}
+	
+	if result != 0 {
+		t.Errorf("Expected 0 for non-existent key, got %v", result)
+	}
+
+	// 테스트 케이스 2: 단일 요소 리스트
+	singleKey := "single_list"
+	dataStore.RPUSH(singleKey, "only_one")
+	
+	result, err = handler.Execute([]string{singleKey}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN on single element list failed: %v", err)
+	}
+	
+	if result != 1 {
+		t.Errorf("Expected 1 for single element list, got %v", result)
+	}
+
+	// 테스트 케이스 3: 다중 요소 리스트 (RPUSH 사용)
+	multiKey := "multi_list"
+	dataStore.RPUSH(multiKey, "a", "b", "c", "d", "e")
+	
+	result, err = handler.Execute([]string{multiKey}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN on multi element list failed: %v", err)
+	}
+	
+	if result != 5 {
+		t.Errorf("Expected 5 for multi element list, got %v", result)
+	}
+
+	// 테스트 케이스 4: LPUSH로 생성된 리스트
+	lpushKey := "lpush_list"
+	dataStore.LPUSH(lpushKey, "first", "second", "third")
+	
+	result, err = handler.Execute([]string{lpushKey}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN on LPUSH created list failed: %v", err)
+	}
+	
+	if result != 3 {
+		t.Errorf("Expected 3 for LPUSH created list, got %v", result)
+	}
+
+	// 테스트 케이스 5: 동적으로 변화하는 리스트 길이
+	dynamicKey := "dynamic_list"
+	
+	// 초기 상태: 키 없음
+	result, err = handler.Execute([]string{dynamicKey}, dataStore)
+	if err != nil || result != 0 {
+		t.Errorf("Initial state should be 0, got %v (err: %v)", result, err)
+	}
+	
+	// 요소 추가 후 길이 확인
+	dataStore.RPUSH(dynamicKey, "item1")
+	result, err = handler.Execute([]string{dynamicKey}, dataStore)
+	if err != nil || result != 1 {
+		t.Errorf("After 1 RPUSH should be 1, got %v (err: %v)", result, err)
+	}
+	
+	// 더 추가
+	dataStore.RPUSH(dynamicKey, "item2", "item3")
+	result, err = handler.Execute([]string{dynamicKey}, dataStore)
+	if err != nil || result != 3 {
+		t.Errorf("After adding 2 more should be 3, got %v (err: %v)", result, err)
+	}
+	
+	// LPUSH로도 추가
+	dataStore.LPUSH(dynamicKey, "front1", "front2")
+	result, err = handler.Execute([]string{dynamicKey}, dataStore)
+	if err != nil || result != 5 {
+		t.Errorf("After LPUSH 2 more should be 5, got %v (err: %v)", result, err)
+	}
+
+	// 테스트 케이스 6: 대용량 리스트 (성능 테스트)
+	largeKey := "large_list"
+	expectedSize := 1000
+	
+	// 큰 리스트 생성
+	for i := 0; i < expectedSize; i++ {
+		dataStore.RPUSH(largeKey, "item")
+	}
+	
+	result, err = handler.Execute([]string{largeKey}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN on large list failed: %v", err)
+	}
+	
+	if result != expectedSize {
+		t.Errorf("Expected %d for large list, got %v", expectedSize, result)
+	}
+
+	// 테스트 케이스 7: 에러 케이스들
+	
+	// 인자 없음
+	result, err = handler.Execute([]string{}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for no arguments")
+	}
+	
+	// 에러 타입 검증
+	if _, ok := err.(*WrongNumberOfArgumentsError); !ok {
+		t.Errorf("Expected WrongNumberOfArgumentsError, got %T", err)
+	}
+	
+	// 인자 과다
+	result, err = handler.Execute([]string{"key1", "key2"}, dataStore)
+	if err == nil {
+		t.Fatal("Expected error for too many arguments")
+	}
+
+	// 테스트 케이스 8: 다른 핸들러와의 상호작용 테스트
+	interactionKey := "interaction_test"
+	
+	// LLEN → 0
+	result, _ = handler.Execute([]string{interactionKey}, dataStore)
+	if result != 0 {
+		t.Errorf("Initial LLEN should be 0, got %v", result)
+	}
+	
+	// RPUSH → 길이 증가
+	rpushHandler := &RPushHandler{}
+	rpushHandler.Execute([]string{interactionKey, "a", "b"}, dataStore)
+	
+	result, _ = handler.Execute([]string{interactionKey}, dataStore)
+	if result != 2 {
+		t.Errorf("After RPUSH 2 items should be 2, got %v", result)
+	}
+	
+	// LPUSH → 길이 더 증가
+	lpushHandler := &LPushHandler{}
+	lpushHandler.Execute([]string{interactionKey, "x", "y", "z"}, dataStore)
+	
+	result, _ = handler.Execute([]string{interactionKey}, dataStore)
+	if result != 5 {
+		t.Errorf("After LPUSH 3 more items should be 5, got %v", result)
+	}
+	
+	// LRANGE로 내용 확인 (LLEN이 정확한지 검증)
+	lrangeHandler := &LRangeHandler{}
+	rangeResult, _ := lrangeHandler.Execute([]string{interactionKey, "0", "-1"}, dataStore)
+	actualItems := rangeResult.([]string)
+	
+	if len(actualItems) != result {
+		t.Errorf("LLEN result %v doesn't match LRANGE length %d", result, len(actualItems))
+	}
+
+	// 테스트 케이스 9: 빈 문자열 요소가 있는 리스트
+	emptyStringKey := "empty_string_test"
+	dataStore.RPUSH(emptyStringKey, "", "non-empty", "", "another")
+	
+	result, err = handler.Execute([]string{emptyStringKey}, dataStore)
+	if err != nil {
+		t.Fatalf("LLEN with empty string elements failed: %v", err)
+	}
+	
+	if result != 4 {
+		t.Errorf("List with empty strings should have length 4, got %v", result)
 	}
 }

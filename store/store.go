@@ -178,10 +178,6 @@ func (s *Store) LRANGE(key string, start, stop int) []string {
 // 반환값:
 //   - int: 추가 후 리스트의 총 길이
 //
-// Redis 호환성:
-//   - 값 추가 순서: values[0]이 가장 왼쪽(인덱스 0)에 위치
-//   - 여러 값 추가 시 순서 보장
-//
 // 예시:
 //
 //	초기: []
@@ -220,4 +216,36 @@ func (s *Store) LPUSH(key string, values ...string) int {
 	s.listStorage[key] = newList
 
 	return newLength
+}
+
+// LLEN은 Redis LLEN 명령어를 구현합니다.
+// 리스트의 길이(요소 개수)를 반환합니다.
+//
+// 동작 방식:
+//   - 키가 존재하지 않으면 0 반환 (Redis 표준 동작)
+//   - 키가 존재하면 리스트의 요소 개수 반환
+//   - 빈 리스트도 0 반환
+//
+// 매개변수:
+//   - key: 길이를 조회할 리스트 키
+//
+// 반환값:
+//   - int: 리스트의 길이 (0 이상의 정수)
+//
+// 예시:
+//   - 키가 없음 → 0
+//   - 빈 리스트 [] → 0
+//   - ["a", "b", "c"] → 3
+//
+// 시간 복잡도: O(1)
+// 공간 복잡도: O(1) (추가 메모리 할당 없음)
+func (s *Store) LLEN(key string) int {
+	// 리스트 존재 여부 확인
+	list, exists := s.listStorage[key]
+	if !exists {
+		// 키가 존재하지 않으면 0 반환 (Redis 표준 동작)
+		return 0
+	}
+
+	return len(list)
 }
